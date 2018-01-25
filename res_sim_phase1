@@ -1,0 +1,119 @@
+from __future__ import division
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import time, os, math, warnings, xlsxwriter
+
+class prop_rock(object):
+    def __init__(self, kx=0, ky=0, por=0, cr=0):
+        self.kx = kx
+        self.ky = ky
+        self.por = por
+        self.cr = cr
+
+class prop_fluid(object):
+    def __init__(self, c_o=0, mu_o=0,rho_o=0):
+        self.c_o = c_o
+        self.mu_o = mu_o
+        self.rho_o = rho_o
+    def calc_b(self,p):
+        return np.exp(-self.c_o*(p-14.7))
+
+class prop_grid(object):
+    def __init__(self, Nx=0, Ny=0, Nz=0):
+        self.Nx = Nx
+        self.Ny = Ny
+        self.Nz = Nz
+
+class prop_res(object):
+    def __init__(self, Lx=0, Ly=0, Lz=0, p_init=0):
+        self.Lx = Lx
+        self.Ly = Ly
+        self.Lz = Lz
+        self.p_init=p_init
+
+class prop_well(object):
+    def __init__(self, loc=0, q=0):
+        self.loc = loc
+        self.q = q
+
+def calc_transmissibility(k_x,mu,B_o,props,i,j):
+    dx=props['res'].Lx/props['grid'].Nx
+    dy=props['res'].Ly/props['grid'].Ny
+    dz=props['res'].Lz/props['grid'].Nz
+
+    k_x=k_x[j,i]
+    mu=mu[j,i]
+    B_o=B_o[j,i]
+    return k_x*dy*dz/mu/B_o/dx
+
+def calc_transmissibility_x(k_x,mu,B_o,props,i,j):
+    dx=props['res'].Lx/props['grid'].Nx
+    dy=props['res'].Ly/props['grid'].Ny
+    dz=props['res'].Lz/props['grid'].Nz
+
+    k_x=(k_x[j,i]+k_x[j,i+1])/2
+    mu=(mu[j,i]+mu[j,i+1])/2
+    B_o=(B_o[j,i]+B_o[j,i+1])/2
+    return k_x*dy*dz/mu/B_o/dx
+
+def calc_transmissibility_y(k_y,mu,B_o,props,i,j):
+    dx=props['res'].Lx/props['grid'].Nx
+    dy=props['res'].Ly/props['grid'].Ny
+    dz=props['res'].Lz/props['grid'].Nz
+
+    k_y=(k_y[j,i]+k_y[j+1,i])/2
+    mu=(mu[j,i]+mu[j+1,i])/2
+    B_o=(B_o[j,i]+B_o[j+1,i])/2
+    return k_y*dx*dz/mu/B_o/dy
+
+def neighbors(a,rowNumber, columnNumber):
+     return [a[i][j] if i >= 0 and i < len(a) and j >= 0 and j < len(a[0]) else 0 for j in range(columnNumber-2, columnNumber+1) for i in range(rowNumber-2, rowNumber+1)]
+
+def assign_matrix(mat,params,props):
+    k_x=params['k_x']
+    k_y=params['k_y']
+    B_o=params['B_o']
+    mu=params['mu']
+    Nx=props['grid'].Nx
+    Ny=props['grid'].Ny
+    Nz=props['grid'].Ny
+
+    m=mat.shape[0]
+    n=mat.shape[1]
+    A=np.zeros((m*n,m*n))
+    for i in range(n):
+        for j in range(m):
+            A[mat[j,i]-1,mat[j,i]-1]=-2*calc_transmissibility(k_x,mu,B_o,props,i,j)
+            if i<Nx-1:
+                A[mat[j,i]-1,mat[j,i+1]-1]=calc_transmissibility_x(k_x,mu,B_o,props,i,j)
+                A[mat[j,i+1]-1,mat[j,i]-1]=A[mat[j,i]-1,mat[j,i+1]-1]
+            if j<Ny-1:
+                A[mat[j,i]-1,mat[j+1,i]-1]=calc_transmissibility_y(k_y,mu,B_o,props,i,j)
+                A[mat[j+1,i]-1,mat[j,i]-1]=A[mat[j,i]-1,mat[j+1,i]-1]
+    return A
+
+def main():
+    # Initialization
+    rock=prop_rock(kx=200, ky=100, por=0.25, cr=0)
+    fluid=prop_fluid(c_o=1.2 * 10 ** -5, mu_o=2, rho_o=49.1)
+    grid=prop_grid(Nx=3, Ny=4, Nz=1)
+    res=prop_res(Lx=3500, Ly=3500, Lz=100, p_init=6000)
+    well=prop_well(loc=(18, 18), q=2000)
+    props={'rock':rock,'fluid':fluid,'grid':grid,'res':res,'well':well}
+
+    # Distributing properties to the grid
+    k_x=np.full((grid.Ny,grid.Nx),rock.kx)
+    k_y=np.full((grid.Ny,grid.Nx),rock.ky)
+    B_o=np.full((grid.Ny,grid.Nx),fluid.calc_b(res.p_init))
+    mu=np.full((grid.Ny,grid.Nx),fluid.mu_o)
+    params={'k_x':k_x,'k_y':k_y,'B_o':B_o,'mu':mu}
+
+    mat=np.reshape(np.arange(1,13),(4,3))
+    A=np.eye(35,35)
+
+    timeint=np.linspace(0,20,20)
+    for t in timeint:
+
+if __name__ == '__main__':
+    main()
