@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.sparse.linalg import gmres
-import time, os, math, warnings, xlsxwriter
+import os
 
 class prop_rock(object):
     def __init__(self, kx=0, ky=0, por=0, cr=0):
@@ -113,13 +113,15 @@ def construct_T(mat, params, props):
                 A[mat[j,i]-1,mat[j+1,i]-1]=calc_transmissibility_y(k_y,mu,B_o,props,i,j)
                 A[mat[j+1,i]-1,mat[j,i]-1]=A[mat[j,i]-1,mat[j+1,i]-1]
 
-        A[j,j]=-np.sum(A[j,:])
+    for k in range(A.shape[0]):
+        p=np.sum(A[k,:])*-1
+        A[k,k]=p
     return A/887.5
 
 def plot_pressure(t,p_pred,title,color):
     # Plotting pressure v time
     #plt.plot(t, p_actual, 'k-',linewidth=3,label='Actual Pwf')
-    plt.plot(t, p_pred, 'gx',markeredgecolor=color,label=title)
+    plt.plot(t, p_pred, color=color, markeredgecolor=color,label=title)
     plt.xlabel("Time (days)")
     plt.ylabel("Pressure (psi)", fontsize=9)
     plt.title("Block Pressure Cell (18,18)",y=1, fontsize=9)
@@ -128,10 +130,16 @@ def plot_pressure(t,p_pred,title,color):
     plt.ylim(0,max(p_pred))
     plt.grid(True)
 
+def spatial_map(p_2D):
+    plt.matshow(p_2D)
+    plt.colorbar()
+    plt.xlabel('grid in x-direction')
+    plt.ylabel('grid in y-direction')
+
 def main():
     # Initialization
-    tstep=10
-    timeint=np.arange(0,400,tstep)
+    tstep=1
+    timeint=np.arange(0,401,tstep)
     rock=prop_rock(kx=200, ky=100, por=0.25, cr=0)
     fluid=prop_fluid(c_o=1.2 * 10 ** -5, mu_o=2, rho_o=49.1)
     grid=prop_grid(Nx=35, Ny=35, Nz=1)
@@ -196,7 +204,9 @@ def main():
     plot_pressure(t_ecl.values,p_ecl.values,title='Eclipse',color='black')
 
     p_2D=np.reshape(p_grids,(grid.Nx,grid.Ny))
-    plt.matshow(p_2D)
+
+    spatial_map(p_2D)
+
 
 if __name__ == '__main__':
     main()
