@@ -17,7 +17,6 @@ class prop_fluid(object):
         self.c_o = c_o
         self.mu_o = mu_o
         self.rho_o = rho_o
-
     def calc_b(self,p):
         return 1/(1+self.c_o*(p-14.7))
 
@@ -26,6 +25,12 @@ class prop_grid(object):
         self.Nx = Nx
         self.Ny = Ny
         self.Nz = Nz
+    def grid_dimension_x(self,Lx):
+        return self.Nx/Lx
+    def grid_dimension_y(self,Ly):
+        return self.Ny/Ly
+    def grid_dimension_z(self,Lz):
+        return self.Nz/Lz
 
 class prop_res(object):
     def __init__(self, Lx=0, Ly=0, Lz=0, p_init=0):
@@ -41,6 +46,11 @@ class prop_well(object):
 
     def index_to_grid(self,Nx):
         return self.loc[1]*Nx+self.loc[0]
+
+class prop_time(object):
+    def __init__(self, tstep=0, timeint=0):
+        self.tstep = tstep
+        self.timeint = timeint
 
 def load_data(filename):
     os.chdir('C:\\Users\\E460\\PycharmProjects\\untitled3\\ResSim')
@@ -118,40 +128,13 @@ def construct_T(mat, params, props):
         A[k,k]=p
     return A/887.5
 
-def plot_pressure(t,p_pred,title,color):
-    # Plotting pressure v time
-    #plt.plot(t, p_actual, 'k-',linewidth=3,label='Actual Pwf')
-    plt.plot(t, p_pred, color=color, markeredgecolor=color,label=title)
-    plt.xlabel("Time (days)")
-    plt.ylabel("Pressure (psi)", fontsize=9)
-    plt.title("Block Pressure Cell (18,18)",y=1, fontsize=9)
-    plt.legend(loc="best", prop=dict(size=8))
-    plt.xlim(0,max(t))
-    plt.ylim(0,max(p_pred))
-    plt.grid(True)
-
-def spatial_map(p_2D):
-    plt.matshow(p_2D)
-    plt.colorbar()
-    plt.xlabel('grid in x-direction')
-    plt.ylabel('grid in y-direction')
-
-def main():
-    # Initialization
-    tstep=1
-    timeint=np.arange(0,401,tstep)
-    rock=prop_rock(kx=200, ky=100, por=0.25, cr=0)
-    fluid=prop_fluid(c_o=1.2 * 10 ** -5, mu_o=2, rho_o=49.1)
-    grid=prop_grid(Nx=35, Ny=35, Nz=1)
-    res=prop_res(Lx=3500, Ly=3500, Lz=100, p_init=6000)
-    well=prop_well(loc=(18, 18), q=2000)
-    dx=res.Lx/grid.Nx
-    dy=res.Lx/grid.Nx
-    dz=res.Lx/grid.Nx
-    props={'rock':rock,'fluid':fluid,'grid':grid,'res':res,'well':well}
-
-    # Load data from Eclipse
-    t_ecl,p_ecl=load_data('eclipse bhp.csv')
+def run_simulation(props):
+    rock=props['rock']
+    fluid=props['fluid']
+    grid=props['grid']
+    res=props['res']
+    wells=props['well']
+    sim_time=props['time']
 
     # Distribute properties (and their values) to the grid
     k_x=np.full((grid.Ny,grid.Nx),rock.kx)
@@ -161,28 +144,34 @@ def main():
     p_grids=np.full((grid.Ny*grid.Nx,1),res.p_init)
     params={'k_x':k_x,'k_y':k_y,'B_o':B_o,'mu':mu}
 
-    # Construct matrix A
+    # Construct transmissibility matrix T
     mat=np.reshape(np.arange(1,grid.Ny*grid.Nx+1),(grid.Ny,grid.Nx))
     T=construct_T(mat, params, props)
 
-    # Create matrix A = transmissibility - accumulation matrix
+    # Create matrix A = transmissibility matrix - accumulation matrix
+    dx=res.Lx/grid.Nx
+    dy=res.Lx/grid.Nx
+    dz=res.Lx/grid.Nx
     V=dx*dy*dz
-    accumulation=V*rock.por*fluid.c_o/5.615/(tstep)
+    accumulation=V*rock.por*fluid.c_o/5.615/(sim_time.tstep)
     A=T-np.eye(T.shape[0])*accumulation
 
     # Assign well flow rate to Q matrix
     Q=np.zeros((T.shape[0],1))
-    Q[well.index_to_grid(grid.Nx)]=-well.q  # There's -1 because Python indexing starts from 0
+    for well in wells:
+        Q[well.index_to_grid(grid.Nx)]=-well.q
 
-    # Right hand side
+    # Calculate right hand side
     p_n=np.full((grid.Ny*grid.Nx,1),-accumulation*res.p_init)
     b=p_n-Q
 
     # Variable of interest: pressure in block (18,18)
     p_well_block=[]
-    for t in timeint:
+
+    # Time-loop
+    for t in sim_time.timeint:
         print('evaluating t = %1.1f (days)' % t)
-        p_well_block.append(p_grids[well.index_to_grid(grid.Nx)])
+        p_well_block.append(p_grids[wells[0].index_to_grid(grid.Nx)])
 
         # Calculate pressure at time level n+1
         p_grids=(gmres(A,b))[0]
@@ -197,16 +186,139 @@ def main():
         A=A-np.eye(A.shape[0])*accumulation
 
         b=-accumulation*p_grids-Q
+    return p_well_block, p_grids
+
+def plot_pressure(t,p_pred,label,color):
+    # Plotting pressure v time
+    plt.plot(t, p_pred, color=color, markeredgecolor=color,label=label)
+    plt.xlabel("Time (days)")
+    plt.ylabel("Block Pressure Cell (18,18)", fontsize=9)
+    plt.legend(loc="best", prop=dict(size=8))
+    plt.xlim(0,max(t))
+    plt.ylim(0,max(p_pred))
+    plt.grid(True)
+    plt.draw()
+
+def spatial_map(p_2D,title):
+    plt.matshow(p_2D)
+    plt.colorbar()
+    plt.xlabel('grid in x-direction')
+    plt.ylabel('grid in y-direction')
+    plt.title(title)
+    plt.draw()
+
+def derivatives(t,p_pred,p_act,title):
+    t_act=np.linspace(0,400,len(p_act))
+    dp_act=abs(p_act[0]-p_act)
+    dp_pred=abs(p_pred[0]-p_pred)
+
+    # Calculate Derivatives
+    p_der_act=np.zeros(len(p_act)-2)
+    p_der_pred=np.zeros(len(p_pred)-2)
+    for i in range(1,len(p_act)-1):
+        p_der_act[i-1]=t_act[i]/(t_act[i+1]-t_act[i-1])*abs(dp_act[i+1]-dp_act[i-1])
+    for i in range(1,len(p_pred)-1):
+        p_der_pred[i-1]=t[i]/(t[i+1]-t[i-1])*abs(dp_pred[i+1]-dp_pred[i-1])
+    plot_derivatives(t_act,t,dp_act,dp_pred,p_der_act,p_der_pred,title)
+
+def plot_derivatives(t_act,t,dp_act,dp_pred,p_der_act,p_der_pred,title):
+    plt.figure()
+    plt.loglog(t_act, dp_act, 'k-',linewidth=3,label='Actual dP')
+    plt.loglog(t, dp_pred, 'ro',label='Predicted dP')
+    plt.loglog(t_act[1:-1], p_der_act, 'k*',linewidth=3,label='Actual Derivative')
+    plt.loglog(t[1:-1], p_der_pred, 'gx',label='Predicted Derivative')
+    plt.title(title)
+    plt.xlabel('dt (hours)')
+    plt.ylabel('dP & Derivative')
+    plt.legend(loc="best", prop=dict(size=12))
+    plt.grid()
+    plt.draw()
+
+def main():
+    # Initialization
+    tstep=1 # day
+    timeint=np.arange(0,401,tstep)
+    sim_time=prop_time(tstep=tstep,
+                       timeint=timeint)
+    rock=prop_rock(kx=200, # permeability in x direction in mD
+                   ky=100, # permeability in y direction in mD
+                   por=0.25, # porosity in fraction
+                   cr=0) # 1/psi
+    fluid=prop_fluid(c_o=1.2 * 10 ** -5, # oil compressibility in 1/psi
+                     mu_o=2, # oil viscosity in cP
+                     rho_o=49.1) # lbm/ft3
+    grid=prop_grid(Nx=35,
+                   Ny=35,
+                   Nz=1) # no of grid blocks in x, y , and z
+    res=prop_res(Lx=3500, # reservoir length in ft
+                 Ly=3500, # reservoir width in ft
+                 Lz=100, # reservoir height in ft
+                 p_init=6000) # initial block pressure in psi
+    well1=prop_well(loc=(18, 18), # well location
+                   q=2000) # well flowrate in STB/D
+    props={'rock':rock,'fluid':fluid,'grid':grid,'res':res,'well':[well1],'time':sim_time}
+
+    # Load data from Eclipse
+    t_ecl,p_ecl=load_data('eclipse bhp.csv')
+
+    ### Main Case: 1 producer
+    # Run simulation
+    print('Running Main Case: 1 producer')
+    p_well_block, p_grids=run_simulation(props)
 
     # Plotting
     plt.figure()
-    plot_pressure(timeint,p_well_block,title='Phase-1 Simulator',color='red')
-    plot_pressure(t_ecl.values,p_ecl.values,title='Eclipse',color='black')
+    plot_pressure(timeint,p_well_block,label='Phase-1 Simulator',color='red')
+    plot_pressure(t_ecl.values,p_ecl.values,label='Eclipse',color='black')
+    plt.title('Main Case: 1 producer')
 
     p_2D=np.reshape(p_grids,(grid.Nx,grid.Ny))
+    spatial_map(p_2D,'Main Case: 1 producer')
+    plt.title('Main Case: 1 producer')
 
-    spatial_map(p_2D)
+    derivatives(timeint,np.matrix(p_well_block),p_ecl.values,'Main Case: 1 producer')
 
+    ## Additional Case: 3 producers
+    # Define 2 more producers
+    well2=prop_well(loc=(3, 5), q=300)
+    well3=prop_well(loc=(33, 30), q=2500)
+    props['well']=[well1,well2,well3]
+
+    # Run simulation
+    print('Running Additional Case: 3 producers')
+    p_well_block, p_grids=run_simulation(props)
+
+    # Plotting
+    plt.figure()
+    plot_pressure(timeint,p_well_block,label='Phase-1 Simulator',color='red')
+    plot_pressure(t_ecl.values,p_ecl.values,label='Eclipse',color='black')
+    plt.title('Additional Case: 3 producers')
+
+    p_2D=np.reshape(p_grids,(grid.Nx,grid.Ny))
+    spatial_map(p_2D,'Additional Case: 3 producers')
+
+    derivatives(timeint,np.matrix(p_well_block),p_ecl.values,'Additional Case: 3 producers')
+
+    ## Additional Case: 1 producer 1 injector
+    # Define 1 injector
+    well4=prop_well(loc=(3, 5), q=-2000)
+    props['well']=[well1,well4]
+
+    # Run simulation
+    print('Running Additional Case: 1 producer 1 injector')
+    p_well_block, p_grids=run_simulation(props)
+
+    # Plotting
+    plt.figure()
+    plot_pressure(timeint,p_well_block,label='Phase-1 Simulator',color='red')
+    plot_pressure(t_ecl.values,p_ecl.values,label='Eclipse',color='black')
+    plt.title('Additional Case: 1 producer 1 injector')
+
+    p_2D=np.reshape(p_grids,(grid.Nx,grid.Ny))
+    spatial_map(p_2D,'Additional Case: 1 producer 1 injector')
+
+    derivatives(timeint,np.matrix(p_well_block),p_ecl.values,'Additional Case: 1 producer 1 injector')
+    plt.show(block=True)
 
 if __name__ == '__main__':
     main()
