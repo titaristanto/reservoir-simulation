@@ -53,12 +53,12 @@ class prop_fluid(object):
         self.c_o = c_o
         self.mu_o = mu_o
         self.rho_o = rho_o
-    def calc_b(self,p):
+    def calc_b(self, p):
         return 1/(1+self.c_o*(p-14.7))
 
 class prop_grid(object):
     """This describes grid dimension and numbers."""
-    def __init__(self, Nx=0, Ny=0, Nz=0):
+    def __init__(self, Nx = 0, Ny = 0, Nz = 0):
         self.Nx = Nx
         self.Ny = Ny
         self.Nz = Nz
@@ -102,7 +102,7 @@ def load_data(filename):
     p=df.loc[:,['BPR:(18,18,1)']]
     return t,p
 
-def calc_transmissibility_x(k_x,mu,B_o,props,i,j):
+def calc_transmissibility_x(k_x, mu, B_o, props, i, j):
     """Calculates transmissibility in x-direction"""
     dx = props['res'].Lx/props['grid'].Nx
     dy = props['res'].Ly/props['grid'].Ny
@@ -113,7 +113,7 @@ def calc_transmissibility_x(k_x,mu,B_o,props,i,j):
     B_o=(B_o[j,i]+B_o[j,i+1])/2
     return k_x*dy*dz/mu/B_o/dx
 
-def calc_transmissibility_y(k_y,mu,B_o,props,i,j):
+def calc_transmissibility_y(k_y, mu, B_o, props, i, j):
     """Calculates transmissibility in y-direction"""
     dx = props['res'].Lx/props['grid'].Nx
     dy = props['res'].Ly/props['grid'].Ny
@@ -248,16 +248,16 @@ def spatial_map(p_2D,title):
 def derivatives(t,p_pred,p_act,title):
     """Computes the derivatives of pressure"""
     t_act=np.linspace(0,400,len(p_act))
-    dp_act=abs(p_act[0]-p_act)
-    dp_pred=abs(p_pred[0]-p_pred)
+    dp_act = abs(p_act[0]-p_act)
+    dp_pred = abs(p_pred[0]-p_pred)
 
     # Calculate Derivatives
-    p_der_act=np.zeros(len(p_act)-2)
+    p_der_act = np.zeros(len(p_act)-2)
     p_der_pred=np.zeros(len(p_pred)-2)
     for i in range(1,len(p_act)-1):
-        p_der_act[i-1]=t_act[i]/(t_act[i+1]-t_act[i-1])*abs(dp_act[i+1]-dp_act[i-1])
+        p_der_act[i-1] = t_act[i]/(t_act[i+1]-t_act[i-1])*abs(dp_act[i+1]-dp_act[i-1])
     for i in range(1,len(p_pred)-1):
-        p_der_pred[i-1]=t[i]/(t[i+1]-t[i-1])*abs(dp_pred[i+1]-dp_pred[i-1])
+        p_der_pred[i-1] = t[i]/(t[i+1]-t[i-1])*abs(dp_pred[i+1]-dp_pred[i-1])
     plot_derivatives(t_act,t,dp_act,dp_pred,p_der_act,p_der_pred,title)
 
 def plot_derivatives(t_act,t,dp_act,dp_pred,p_der_act,p_der_pred,title):
@@ -276,25 +276,25 @@ def plot_derivatives(t_act,t,dp_act,dp_pred,p_der_act,p_der_pred,title):
 
 def main():
     # Initialization
-    tstep=1 # day
-    timeint=np.arange(0,401,tstep)
-    sim_time=prop_time(tstep=tstep,
+    tstep = 1 # day
+    timeint = np.arange(0,401,tstep)
+    sim_time = prop_time(tstep=tstep,
                        timeint=timeint)
-    rock=prop_rock(kx=200, # permeability in x direction in mD
+    rock = prop_rock(kx=200, # permeability in x direction in mD
                    ky=100, # permeability in y direction in mD
                    por=0.25, # porosity in fraction
                    cr=0) # 1/psi
-    fluid=prop_fluid(c_o=1.2 * 10 ** -5, # oil compressibility in 1/psi
+    fluid = prop_fluid(c_o=1.2 * 10 ** -5, # oil compressibility in 1/psi
                      mu_o=2, # oil viscosity in cP
                      rho_o=49.1) # lbm/ft3
-    grid=prop_grid(Nx=35,
+    grid = prop_grid(Nx=35,
                    Ny=35,
                    Nz=1) # no of grid blocks in x, y , and z
-    res=prop_res(Lx=3500, # reservoir length in ft
+    res = prop_res(Lx=3500, # reservoir length in ft
                  Ly=3500, # reservoir width in ft
                  Lz=100, # reservoir height in ft
                  p_init=6000) # initial block pressure in psi
-    well1=prop_well(loc=(18, 18), # well location
+    well1 = prop_well(loc=(18, 18), # well location
                    q=2000) # well flowrate in STB/D
     props={'rock':rock,'fluid':fluid,'grid':grid,'res':res,'well':[well1],'time':sim_time}
 
@@ -312,7 +312,7 @@ def main():
     plot_pressure(t_ecl.values,p_ecl.values,label='Eclipse',color='black')
     plt.title('Main Case: 1 producer')
 
-    p_2D=np.reshape(p_grids,(grid.Nx,grid.Ny))
+    p_2D = np.reshape(p_grids,(grid.Nx,grid.Ny))
     spatial_map(p_2D,'Main Case: 1 producer')
     plt.title('Main Case: 1 producer')
 
@@ -320,8 +320,8 @@ def main():
 
     ## Additional Case: 3 producers
     # Define 2 more producers
-    well2=prop_well(loc=(3, 5), q=300)
-    well3=prop_well(loc=(33, 30), q=2500)
+    well2 = prop_well(loc=(3, 5), q=300)
+    well3 = prop_well(loc=(33, 30), q=2500)
     props['well']=[well1,well2,well3]
 
     # Run simulation
@@ -334,14 +334,14 @@ def main():
     plot_pressure(t_ecl.values,p_ecl.values,label='Eclipse',color='black')
     plt.title('Additional Case: 3 producers')
 
-    p_2D=np.reshape(p_grids,(grid.Nx,grid.Ny))
+    p_2D = np.reshape(p_grids,(grid.Nx,grid.Ny))
     spatial_map(p_2D,'Additional Case: 3 producers')
 
     derivatives(timeint,np.matrix(p_well_block),p_ecl.values,'Additional Case: 3 producers')
 
     ## Additional Case: 1 producer 1 injector
     # Define 1 injector
-    well4=prop_well(loc=(3, 5), q=-2000)
+    well4 = prop_well(loc=(3, 5), q=-2000)
     props['well']=[well1,well4]
 
     # Run simulation
