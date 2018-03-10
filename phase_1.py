@@ -23,8 +23,7 @@ so then we can solve for pressure at the next time level. This process continues
 it reaches the end of simulation time.
 
 The main simulation loop in this file calls the `run_simulation()` function for
-simulating the reservoir dynamics. The `main()` function runs the simulation, showing 
-three different example cases: 
+simulating the reservoir dynamics. The `main()` function runs three different example cases: 
 - 1 producer
 - 3 producers
 - 1 producer and 1 injector
