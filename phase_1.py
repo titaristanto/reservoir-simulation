@@ -49,7 +49,7 @@ class prop_fluid(object):
     This class captures fluid properties. Basic properties are assumed constant.
     Formation volume factor (b) is a function of pressure.
     """
-    def __init__(self, c_o=0, mu_o=0,rho_o=0):
+    def __init__(self, c_o = 0, mu_o = 0,rho_o = 0):
         self.c_o = c_o
         self.mu_o = mu_o
         self.rho_o = rho_o
@@ -104,9 +104,9 @@ def load_data(filename):
 
 def calc_transmissibility_x(k_x,mu,B_o,props,i,j):
     """Calculates transmissibility in x-direction"""
-    dx=props['res'].Lx/props['grid'].Nx
-    dy=props['res'].Ly/props['grid'].Ny
-    dz=props['res'].Lz/props['grid'].Nz
+    dx = props['res'].Lx/props['grid'].Nx
+    dy = props['res'].Ly/props['grid'].Ny
+    dz = props['res'].Lz/props['grid'].Nz
 
     k_x=(k_x[j,i]+k_x[j,i+1])/2
     mu=(mu[j,i]+mu[j,i+1])/2
@@ -115,18 +115,18 @@ def calc_transmissibility_x(k_x,mu,B_o,props,i,j):
 
 def calc_transmissibility_y(k_y,mu,B_o,props,i,j):
     """Calculates transmissibility in y-direction"""
-    dx=props['res'].Lx/props['grid'].Nx
-    dy=props['res'].Ly/props['grid'].Ny
-    dz=props['res'].Lz/props['grid'].Nz
+    dx = props['res'].Lx/props['grid'].Nx
+    dy = props['res'].Ly/props['grid'].Ny
+    dz = props['res'].Lz/props['grid'].Nz
 
-    k_y=(k_y[j,i]+k_y[j+1,i])/2
-    mu=(mu[j,i]+mu[j+1,i])/2
-    B_o=(B_o[j,i]+B_o[j+1,i])/2
+    k_y = (k_y[j,i] + k_y[j+1,i])/2
+    mu = (mu[j,i] + mu[j+1,i])/2
+    B_o = (B_o[j,i] + B_o[j+1,i])/2
     return k_y*dx*dz/mu/B_o/dy
 
 def ij_to_grid(i,j,Nx):
     """Converts i,j coordinate to grid number"""
-    return (i)+Nx*j
+    return (i) + Nx*j
 
 def construct_T(mat, params, props):
     """
@@ -145,16 +145,16 @@ def construct_T(mat, params, props):
         for i in range(n):
             # 2 neighbors in x direction
             if i<n-1:
-                A[mat[j,i]-1,mat[j,i+1]-1]=calc_transmissibility_x(k_x,mu,B_o,props,i,j)
-                A[mat[j,i+1]-1,mat[j,i]-1]=A[mat[j,i]-1,mat[j,i+1]-1]
+                A[mat[j,i]-1,mat[j,i+1]-1] = calc_transmissibility_x(k_x,mu,B_o,props,i,j)
+                A[mat[j,i+1]-1,mat[j,i]-1] = A[mat[j,i]-1,mat[j,i+1]-1]
             # 2 neighbors in y direction
             if j<m-1:
-                A[mat[j,i]-1,mat[j+1,i]-1]=calc_transmissibility_y(k_y,mu,B_o,props,i,j)
-                A[mat[j+1,i]-1,mat[j,i]-1]=A[mat[j,i]-1,mat[j+1,i]-1]
+                A[mat[j,i]-1,mat[j+1,i]-1] = calc_transmissibility_y(k_y,mu,B_o,props,i,j)
+                A[mat[j+1,i]-1,mat[j,i]-1] = A[mat[j,i]-1,mat[j+1,i]-1]
 
     for k in range(A.shape[0]):
         p=np.sum(A[k,:])*-1
-        A[k,k]=p
+        A[k,k] = p
     return A/887.5
 
 def run_simulation(props):
@@ -186,24 +186,24 @@ def run_simulation(props):
     T=construct_T(mat, params, props)
 
     # Create matrix A = transmissibility matrix - accumulation matrix
-    dx=res.Lx/grid.Nx
-    dy=res.Lx/grid.Nx
-    dz=res.Lx/grid.Nx
-    V=dx*dy*dz
-    accumulation=V*rock.por*fluid.c_o/5.615/(sim_time.tstep)
-    A=T-np.eye(T.shape[0])*accumulation
+    dx = res.Lx/grid.Nx
+    dy = res.Lx/grid.Nx
+    dz = res.Lx/grid.Nx
+    V = dx*dy*dz
+    accumulation = V*rock.por*fluid.c_o/5.615/(sim_time.tstep)
+    A = T-np.eye(T.shape[0])*accumulation
 
     # Assign well flow rate to Q matrix
-    Q=np.zeros((T.shape[0],1))
+    Q = np.zeros((T.shape[0],1))
     for well in wells:
-        Q[well.index_to_grid(grid.Nx)]=-well.q
+        Q[well.index_to_grid(grid.Nx)] = -well.q
 
     # Calculate right hand side of the equation
-    p_n=np.full((grid.Ny*grid.Nx,1),-accumulation*res.p_init)
-    b=p_n-Q
+    p_n = np.full((grid.Ny*grid.Nx,1),-accumulation*res.p_init)
+    b = p_n-Q
 
     # Initiate variable of interest: pressure in block (18,18)
-    p_well_block=[]
+    p_well_block = []
 
     # Time-loop
     for t in sim_time.timeint:
