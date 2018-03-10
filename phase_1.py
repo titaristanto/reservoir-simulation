@@ -38,7 +38,7 @@ class prop_rock(object):
     This is a class that captures rock physical properties, including permeability, porosity, and
     compressibility.
     """
-    def __init__(self, kx=0, ky=0, por=0, cr=0):
+    def __init__(self, kx = 0, ky = 0, por = 0, cr = 0):
         self.kx = kx
         self.ky = ky
         self.por = por
@@ -85,11 +85,11 @@ class prop_well(object):
         self.q = q
 
     def index_to_grid(self,Nx):
-        return self.loc[1]*Nx+self.loc[0]
+        return self.loc[1]*Nx + self.loc[0]
 
 class prop_time(object):
     """Describes time-step (assumed constant) and time interval"""
-    def __init__(self, tstep=0, timeint=0):
+    def __init__(self, tstep = 0, timeint=0):
         self.tstep = tstep
         self.timeint = timeint
 
@@ -108,9 +108,9 @@ def calc_transmissibility_x(k_x, mu, B_o, props, i, j):
     dy = props['res'].Ly/props['grid'].Ny
     dz = props['res'].Lz/props['grid'].Nz
 
-    k_x=(k_x[j,i]+k_x[j,i+1])/2
-    mu=(mu[j,i]+mu[j,i+1])/2
-    B_o=(B_o[j,i]+B_o[j,i+1])/2
+    k_x = (k_x[j,i]+k_x[j,i+1])/2
+    mu = (mu[j,i]+mu[j,i+1])/2
+    B_o = (B_o[j,i]+B_o[j,i+1])/2
     return k_x*dy*dz/mu/B_o/dx
 
 def calc_transmissibility_y(k_y, mu, B_o, props, i, j):
