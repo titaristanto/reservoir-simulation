@@ -131,7 +131,7 @@ def ij_to_grid(i,j,Nx):
 def construct_T(mat, params, props):
     """
     Given various rock and fluid properties and grid geometry, this function constructs
-    transmissibility matrix T. The general structure of matrix T is a tri-diagonal matrix.
+    transmissibility matrix T. Matrix T is a tri-diagonal matrix.
     """
     k_x=params['k_x']
     k_y=params['k_y']
