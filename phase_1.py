@@ -3,9 +3,42 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.sparse.linalg import gmres
-import os, io, requests
+
+"""
+Tita Ristanto - 2018 
+
+This file is an implementation of a discretized single-phase homogeneous isothermal 2D reservoir 
+equation: T*p^(n+1)=D(p^(n+1)-p^(n))+Q, where T is a transmissibility matrix, D is an accumulation
+matrix, and Q is a source/sink matrix (which represents well(s)). p^(n+1) is a vector of unknown 
+(in this case, pressure) at time level n and p^(n) is the same variable at current time level n.
+This case assumes no capillary pressure, isotropic permeability, and constant viscosity. 
+Well treatment is not included. This code treats the unknown(pressure) implicitly and transmissibilities 
+explicitly.
+
+Generalized Minimal Residual iteration (GMRES) is used to solve the linear matrix system, 
+which is an iterative method for the numerical solution of a nonsymmetric system of 
+linear equations. This function solves for p at time level n+1. This new pressure vector 
+updates formation volume factor B_o in every grid, which also updates transmissibility matrix, 
+so then we can solve for pressure at the next time level. This process continues until 
+it reaches the end of simulation time.
+
+The main simulation loop in this file calls the `run_simulation()` function for
+simulating the reservoir dynamics. The `main()` function runs the simulation, showing 
+three different example cases: 
+- 1 producer
+- 3 producers
+- 1 producer and 1 injector
+
+Variable of interest demonstrated here includes block pressure (in the middle of the reservoir)
+and spatial pressure.
+
+"""
 
 class prop_rock(object):
+    """
+    This is a class that captures rock physical properties, including permeability, porosity, and
+    compressibility.
+    """
     def __init__(self, kx=0, ky=0, por=0, cr=0):
         self.kx = kx
         self.ky = ky
@@ -13,6 +46,10 @@ class prop_rock(object):
         self.cr = cr
 
 class prop_fluid(object):
+    """
+    This class captures fluid properties. Basic properties are assumed constant.
+    Formation volume factor (b) is a function of pressure.
+    """
     def __init__(self, c_o=0, mu_o=0,rho_o=0):
         self.c_o = c_o
         self.mu_o = mu_o
@@ -21,6 +58,7 @@ class prop_fluid(object):
         return 1/(1+self.c_o*(p-14.7))
 
 class prop_grid(object):
+    """This describes grid dimension and numbers."""
     def __init__(self, Nx=0, Ny=0, Nz=0):
         self.Nx = Nx
         self.Ny = Ny
@@ -33,6 +71,7 @@ class prop_grid(object):
         return self.Nz/Lz
 
 class prop_res(object):
+    """A class that captures reservoir dimension and initial pressure."""
     def __init__(self, Lx=0, Ly=0, Lz=0, p_init=0):
         self.Lx = Lx
         self.Ly = Ly
@@ -40,6 +79,8 @@ class prop_res(object):
         self.p_init=p_init
 
 class prop_well(object):
+    """Describes well location a flow rate. Also provides conversion from
+    cartesian i,j coordinate to grid number"""
     def __init__(self, loc=0, q=0):
         self.loc = loc
         self.q = q
@@ -48,11 +89,13 @@ class prop_well(object):
         return self.loc[1]*Nx+self.loc[0]
 
 class prop_time(object):
+    """Describes time-step (assumed constant) and time interval"""
     def __init__(self, tstep=0, timeint=0):
         self.tstep = tstep
         self.timeint = timeint
 
 def load_data(filename):
+    """Loads ECLIPSE simulation block pressure data as a comparison"""
     url='https://raw.githubusercontent.com/titaristanto/reservoir-simulation/master/eclipse%20bhp.csv'
     df = pd.read_csv(url)
 
@@ -60,27 +103,8 @@ def load_data(filename):
     p=df.loc[:,['BPR:(18,18,1)']]
     return t,p
 
-def calc_transmissibility_block_x(k_x,mu,B_o,props,i,j):
-    dx=props['res'].Lx/props['grid'].Nx
-    dy=props['res'].Ly/props['grid'].Ny
-    dz=props['res'].Lz/props['grid'].Nz
-
-    k_x=k_x[j,i]
-    mu=mu[j,i]
-    B_o=B_o[j,i]
-    return k_x*dy*dz/mu/B_o/dx
-
-def calc_transmissibility_block_y(k_y,mu,B_o,props,i,j):
-    dx=props['res'].Lx/props['grid'].Nx
-    dy=props['res'].Ly/props['grid'].Ny
-    dz=props['res'].Lz/props['grid'].Nz
-
-    k_y=k_y[j,i]
-    mu=mu[j,i]
-    B_o=B_o[j,i]
-    return k_y*dx*dz/mu/B_o/dy
-
 def calc_transmissibility_x(k_x,mu,B_o,props,i,j):
+    """Calculates transmissibility in x-direction"""
     dx=props['res'].Lx/props['grid'].Nx
     dy=props['res'].Ly/props['grid'].Ny
     dz=props['res'].Lz/props['grid'].Nz
@@ -91,6 +115,7 @@ def calc_transmissibility_x(k_x,mu,B_o,props,i,j):
     return k_x*dy*dz/mu/B_o/dx
 
 def calc_transmissibility_y(k_y,mu,B_o,props,i,j):
+    """Calculates transmissibility in y-direction"""
     dx=props['res'].Lx/props['grid'].Nx
     dy=props['res'].Ly/props['grid'].Ny
     dz=props['res'].Lz/props['grid'].Nz
@@ -101,9 +126,14 @@ def calc_transmissibility_y(k_y,mu,B_o,props,i,j):
     return k_y*dx*dz/mu/B_o/dy
 
 def ij_to_grid(i,j,Nx):
+    """Converts i,j coordinate to grid number"""
     return (i)+Nx*j
 
 def construct_T(mat, params, props):
+    """
+    Given various rock and fluid properties and grid geometry, this function constructs
+    transmissibility matrix T. The general structure of matrix T is a tri-diagonal matrix.
+    """
     k_x=params['k_x']
     k_y=params['k_y']
     B_o=params['B_o']
@@ -129,6 +159,14 @@ def construct_T(mat, params, props):
     return A/887.5
 
 def run_simulation(props):
+    """
+    This function controls the simulation loop. Basically at every time-step, it
+    solves the linear system, captures variable of interest, and update parameters.
+
+    :param props: a dictionary containing rock, fluid, and well properties.
+    :return: p_well_block: time-series block pressure
+             p_grids: 2D pressure matrix representing spatial distribution of pressure
+    """
     rock=props['rock']
     fluid=props['fluid']
     grid=props['grid']
@@ -161,11 +199,11 @@ def run_simulation(props):
     for well in wells:
         Q[well.index_to_grid(grid.Nx)]=-well.q
 
-    # Calculate right hand side
+    # Calculate right hand side of the equation
     p_n=np.full((grid.Ny*grid.Nx,1),-accumulation*res.p_init)
     b=p_n-Q
 
-    # Variable of interest: pressure in block (18,18)
+    # Initiate variable of interest: pressure in block (18,18)
     p_well_block=[]
 
     # Time-loop
@@ -189,7 +227,7 @@ def run_simulation(props):
     return p_well_block, p_grids
 
 def plot_pressure(t,p_pred,label,color):
-    # Plotting pressure v time
+    """Plots pressure v time"""
     plt.plot(t, p_pred, color=color, markeredgecolor=color,label=label)
     plt.xlabel("Time (days)")
     plt.ylabel("Block Pressure Cell (18,18)", fontsize=9)
@@ -200,6 +238,7 @@ def plot_pressure(t,p_pred,label,color):
     plt.draw()
 
 def spatial_map(p_2D,title):
+    """Plots variable of interest on a 2D spatial map"""
     plt.matshow(p_2D)
     plt.colorbar()
     plt.xlabel('grid in x-direction')
@@ -208,6 +247,7 @@ def spatial_map(p_2D,title):
     plt.draw()
 
 def derivatives(t,p_pred,p_act,title):
+    """Computes the derivatives of pressure"""
     t_act=np.linspace(0,400,len(p_act))
     dp_act=abs(p_act[0]-p_act)
     dp_pred=abs(p_pred[0]-p_pred)
@@ -222,6 +262,7 @@ def derivatives(t,p_pred,p_act,title):
     plot_derivatives(t_act,t,dp_act,dp_pred,p_der_act,p_der_pred,title)
 
 def plot_derivatives(t_act,t,dp_act,dp_pred,p_der_act,p_der_pred,title):
+    """Computes the derivatives of pressure"""
     plt.figure()
     plt.loglog(t_act, dp_act, 'k-',linewidth=3,label='Actual dP')
     plt.loglog(t, dp_pred, 'ro',label='Predicted dP')
