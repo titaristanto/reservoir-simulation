@@ -1120,6 +1120,7 @@ def main():
     print("Completed in %s seconds" % (time.time() - start_time))
 
     # Save simulation result into Excel file
+    """ Off-line!
     dict_sum = OrderedDict([('Time (days)', t_list),
                           ('Oil Rate (STB/day)', q_list),
                           ('Bottom Hole Pressure (psi)', bhp_list),
@@ -1129,9 +1130,10 @@ def main():
     writer = pd.ExcelWriter('C:\\Users\\E460\\PycharmProjects\\untitled3\\ResSim\\pressure_control_crit1_only.xlsx', engine='xlsxwriter')
     df.to_excel(writer, index=False)
     writer.save()
-
+    """
+    
     # Load data from ECLIPSE: pressure control (DATA 1)
-    t1_ecl, pwf1_ecl, bpr1_ecl, fpr1_ecl, qo1_ecl, qg1_ecl = load_data('C:\\Users\\E460\PycharmProjects\\untitled3\\ResSim\\data1_p_control.csv')
+    t1_ecl, pwf1_ecl, bpr1_ecl, fpr1_ecl, qo1_ecl, qg1_ecl = load_data('https://raw.githubusercontent.com/titaristanto/reservoir-simulation/master/data1_p_control.csv')
 
     # Plot pressure
     plt.figure()
@@ -1188,7 +1190,7 @@ def main():
     print("Completed in %s seconds" % (time.time() - start_time))
 
     # Load data from ECLIPSE: pressure control (DATA 2)
-    t2_ecl, pwf2_ecl, bpr2_ecl, fpr2_ecl, qo2_ecl, qg2_ecl = load_data('C:\\Users\\E460\PycharmProjects\\untitled3\\ResSim\\data2_q_control.csv')
+    t2_ecl, pwf2_ecl, bpr2_ecl, fpr2_ecl, qo2_ecl, qg2_ecl = load_data('https://raw.githubusercontent.com/titaristanto/reservoir-simulation/master/data2_q_control.csv')
 
     # Plot pressure
     plt.figure()
