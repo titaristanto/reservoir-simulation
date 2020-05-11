@@ -1,14 +1,13 @@
 from __future__ import division
 
-import os
+import time
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from scipy import sparse, io
-from scipy.linalg import norm
+from matplotlib.colors import LogNorm
+from pylab import figure
 from scipy.sparse.linalg import gmres
-from sklearn.metrics import mean_absolute_error
 
 
 class prop_rock(object):
@@ -260,19 +259,25 @@ class prop_fluid(object):
 
 class prop_grid(object):
     """This describes grid dimension and numbers."""
-    def __init__(self, Nx=0, Ny=0, Nz=0):
+    def __init__(self, Nx=0, Ny=0, Nz=0, dx=0, dy=0, dz=0):
         self.Nx = Nx
         self.Ny = Ny
         self.Nz = Nz
+        self.dx = dx
+        self.dy = dy
+        self.dz = dz
 
     def grid_dimension_x(self, Lx):
-        return self.Nx / Lx
+        self.dx = Lx / self.Nx
+        return self.dx
 
     def grid_dimension_y(self, Ly):
-        return self.Ny / Ly
+        self.dy = Ly / self.Ny
+        return self.dy
 
     def grid_dimension_z(self, Lz):
-        return self.Nz / Lz
+        self.dz = Lz / self.Nz
+        return self.dz
 
 
 class prop_res(object):
@@ -297,29 +302,37 @@ class prop_res(object):
 class prop_well(object):
     """Describes well location a flow rate. Also provides conversion from
     cartesian i,j coordinate to grid number"""
-    def __init__(self, loc=0, q=0):
+    def __init__(self, loc=0, q=0, q_lim=0, pwf=0, pwf_lim=0, rw=0, qo_control=True):
         self.loc = loc
+        self.pwf = pwf
         self.q = q
+        self.rw = rw
+        self.qo_control = qo_control
+        self.q_lim = q_lim
+        self.pwf_lim = pwf_lim
 
     def index_to_grid(self, Nx):
-        return self.loc[1] * Nx + self.loc[0]
+        return (self.loc[1] - 1) * Nx + self.loc[0]
 
 
 class prop_time(object):
     """Describes time-step (assumed constant) and time interval"""
-    def __init__(self, tstep=0, timeint=0):
+    def __init__(self, tstep=0, tmax=0):
         self.tstep = tstep
-        self.timeint = timeint
+        self.tmax = tmax
 
 
 def load_data(filename):
     """Loads ECLIPSE simulation block pressure data as a comparison"""
-    url = 'https://raw.githubusercontent.com/titaristanto/reservoir-simulation/master/eclipse%20bhp.csv'
-    df = pd.read_csv(url)
+    df = pd.read_csv(filename)
 
-    t = df.loc[:, ['TIME']]  # Time in simulation: DAY
-    p = df.loc[:, ['BPR:(18,18,1)']]
-    return t, p
+    t1_ecl = df.loc[:, ['TIME']]  # Time in simulation: DAY
+    pwf_ecl = df.loc[:, ['WBHP:PWELL01']]
+    bpr_ecl = df.loc[:, ['BPR:(12,12,1)']]
+    fpr_ecl = df.loc[:, ['FPR']]
+    qo1_ecl = df.loc[:, ['FOPR']]
+    qg1_ecl = df.loc[:, ['FGPR']]
+    return t1_ecl, pwf_ecl, bpr_ecl, fpr_ecl, qo1_ecl, qg1_ecl
 
 
 def calc_transmissibility_x(k_x, kr_o, mu_o, b_o, params, i, j):
@@ -357,7 +370,7 @@ def calc_transmissibility_y(k_y, kr_o, mu_o, b_o, params, i, j):
 
 
 def upwind(p_grids, pars, i, j, dir):
-    # upwind parameters based on pressure between two blocks
+    # upwind parameters based on pressure values between two blocks
     if dir == 'x':
         if p_grids[j, i] > p_grids[j, i + 1]:
             mult = 1
@@ -456,7 +469,7 @@ def construct_T(mat, params):
     return T
 
 
-def construct_J(mat, params, props):
+def construct_J(mat, params, props, T):
     # Construct Jacobian matrix
     k_x = params['k_x']
     k_y = params['k_y']
@@ -473,15 +486,12 @@ def construct_J(mat, params, props):
     dkr_g = params['dkr_g']
     rs = params['rs']
     drs = params['drs']
-    p_grids_n = params['p_grids_n']
     p_grids_n1 = params['p_grids_n1']
     dx = params['dx']
     dy = params['dy']
     dz = params['dz']
-    sg_n = params['sg_n']
     sg_n1 = params['sg_n1']
     por = props['rock'].por
-    T = params['T']
 
     m = mat.shape[0]
     n = mat.shape[1]
@@ -763,119 +773,18 @@ def construct_D(mat, params, props):
     return D
 
 
-def run_simulation(props):
-    rock = props['rock']
-    fluid = props['fluid']
+def distribute_properties(props):
+    """
+    Distribute rock and fluid properties to the grid
+    :param props: dictionary of rock and fluid properties
+    :return: dictionary of grids containing rock and fluid properties (after property distribution)
+    """
+
     grid = props['grid']
+    fluid = props['fluid']
+    rock = props['rock']
     res = props['res']
-    wells = props['well']
-    sim_time = props['time']
 
-    # Distribute properties (and their values) to the grid
-    k_x = np.full((grid.Ny, grid.Nx), rock.kx)
-    k_y = np.full((grid.Ny, grid.Nx), rock.ky)
-    B_o = np.full((grid.Ny, grid.Nx), fluid.calc_b(res.p_init))
-    mu = np.full((grid.Ny, grid.Nx), fluid.mu_o)
-    p_grids = np.full((grid.Ny * grid.Nx, 1), res.p_init)
-    params = {'k_x': k_x, 'k_y': k_y, 'B_o': B_o, 'mu': mu}
-
-    # Construct transmissibility matrix T
-    mat = np.reshape(np.arange(1, grid.Ny * grid.Nx + 1), (grid.Ny, grid.Nx))
-    T = construct_T(mat, params, props)
-
-    # Create matrix A = transmissibility matrix - accumulation matrix
-    D = construct_D(mat, params, props)
-
-    dx = res.Lx / grid.Nx
-    dy = res.Lx / grid.Nx
-    dz = res.Lx / grid.Nx
-    V = dx * dy * dz
-    accumulation = V * rock.por * fluid.c_o / 5.615 / (sim_time.tstep)
-    A = T - np.eye(T.shape[0]) * accumulation
-
-    # Assign well flow rate to Q matrix
-    Q = np.zeros((T.shape[0], 1))
-    for well in wells:
-        Q[well.index_to_grid(grid.Nx)] = -well.q
-
-    # Calculate right hand side
-    p_n = np.full((grid.Ny * grid.Nx, 1), -accumulation * res.p_init)
-    b = p_n - Q
-
-    # Variable of interest: pressure in block (18,18)
-    p_well_block = []
-
-    # Time-loop
-    for t in sim_time.timeint:
-        print('evaluating t = %1.1f (days)' % t)
-        p_well_block.append(p_grids[wells[0].index_to_grid(grid.Nx)])
-
-        # Calculate pressure at time level n+1
-        p_grids = (gmres(A, b))[0]
-        p_grids = np.reshape(p_grids, (len(p_grids), 1))
-
-        # Update B, b, and transmissibility matrix
-        for i in range(grid.Nx):
-            for j in range(grid.Ny):
-                B_o[i, j] = fluid.calc_b(p_grids[ij_to_grid(i, j, grid.Nx)])
-        params['B_o'] = B_o
-        A = construct_T(mat, params, props)
-        A = A - np.eye(A.shape[0]) * accumulation
-
-        b = -accumulation * p_grids - Q
-    return p_well_block, p_grids
-
-
-def main():
-    # Initialization
-    tstep = 2  # day
-    timeint = np.arange(0, 10, tstep)
-    sim_time = prop_time(tstep=tstep,
-                         timeint=timeint)
-    rock = prop_rock(kx=np.array([50, 50, 50, 150, 150, 150]),  # permeability in x direction in mD
-                     ky=np.array([200, 200, 200, 300, 300, 300]),  # permeability in y direction in mD
-                     por=0.22,  # porosity in fraction
-                     cr=0)  # 1/psi
-    fluid = prop_fluid(c_o=0.8e-5,  # oil compressibility in 1/psi
-                       mu_o=2.5,  # oil viscosity in cP
-                       rho_o=49.1,  # lbm/ft3
-                       p_bub=3500,  # pb in psi
-                       p_atm=14.7)  # atmospheric pressure in psi
-    grid = prop_grid(Nx=3,
-                     Ny=2,
-                     Nz=1)  # no of grid blocks in x, y, and z direction
-    res = prop_res(Lx=1500,  # reservoir length in ft
-                   Ly=1500,  # reservoir width in ft
-                   Lz=200,  # reservoir height in ft
-                   press_n=np.array([2500, 2525, 2550, 2450, 2475, 2500]),  # block pressure at time level n in psi
-                   sg_n=np.array([0, 0.1, 0.2, 0.3, 0.4, 0.5]),  # gas saturation at time level n
-                   press_n1_k=np.array([2505, 2530, 2555, 2455, 2480, 2505]),
-                   # block pressure at time level n+1, iteration k
-                   sg_n1_k=np.array([0.1, 0.2, 0.3, 0.4, 0.5, 0.6]))  # gas saturation at time level n+1, iteration k
-    well1 = prop_well(loc=(1, 1),  # well location
-                      q=0)  # well flowrate in STB/D
-    props = {'rock': rock, 'fluid': fluid, 'grid': grid, 'res': res, 'well': [well1], 'time': sim_time}
-
-    '''/Reference
-    press_n=np.array([2500, 2525, 2550, 2450, 2475, 2500]),  # block pressure at time level n in psi
-    sg_n=np.array([0, 0.1, 0.2, 0.3, 0.4, 0.5]),  # gas saturation at time level n
-    press_n1_k=np.array([2505, 2530, 2555, 2455, 2480, 2505]),  # block pressure at time level n+1, iteration k
-    sg_n1_k=np.array([0.1, 0.2, 0.3, 0.4, 0.5, 0.6])) # gas saturation at time level n+1, iteration k
-    /end Reference
-    
-    /Test_Data
-    press_n=np.array([2400, 2425, 2450, 2350, 2375, 2400]),  # block pressure at time level n in psi
-    sg_n=np.array([0, 0.15, 0.25, 0.35, 0.45, 0.55]),  # gas saturation at time level n
-    press_n1_k=np.array([2405, 2430, 2455, 2355, 2380, 2405]),  # block pressure at time level n+1, iteration k
-    sg_n1_k=np.array([0.15, 0.25, 0.35, 0.45, 0.55, 0.65])) # gas saturation at time level n+1, iteration k
-    /end_Test Data
-    '''
-
-    # Check Fluid and Rock Properties
-    # fluid.plot_all()
-    # rock.plot_all()
-
-    ## Distribute properties (and their values) to the grid
     b_o = np.zeros(grid.Ny * grid.Nx)
     db_o = np.zeros(grid.Ny * grid.Nx)
     b_g = np.zeros(grid.Ny * grid.Nx)
@@ -905,9 +814,9 @@ def main():
         dkr_g[i] = rock.calc_dkrg(res.sg_n1_k[i])
 
         # Grid size
-        dx = np.full((grid.Ny, grid.Nx), props['res'].Lx / props['grid'].Nx)
-        dy = np.full((grid.Ny, grid.Nx), props['res'].Ly / props['grid'].Ny)
-        dz = np.full((grid.Ny, grid.Nx), props['res'].Lz / props['grid'].Nz)
+        dx = np.full((grid.Ny, grid.Nx), grid.grid_dimension_x(res.Lx))
+        dy = np.full((grid.Ny, grid.Nx), grid.grid_dimension_y(res.Ly))
+        dz = np.full((grid.Ny, grid.Nx), grid.grid_dimension_z(res.Lz))
     params = {'k_x': rock.kx, 'k_y': rock.ky, 'b_o': b_o, 'db_o': db_o, 'b_g': b_g, 'db_g': db_g,
               'mu_o': mu_o, 'mu_g': mu_g, 'dmu_g': dmu_g, 'rs': rs, 'drs': drs, 'p_grids_n': res.press_n,
               'p_grids_n1': res.press_n1_k,
@@ -915,60 +824,420 @@ def main():
               'dx': dx, 'dy': dy, 'dz': dz}
     for p in params:
         params[p] = np.reshape(params[p], (grid.Ny, grid.Nx))
-    mat = np.reshape(np.arange(1, grid.Ny * grid.Nx + 1), (grid.Ny, grid.Nx))
+    return params
 
-    # Construct matrix T (containing transmissibility terms)
-    T = construct_T(mat, params)
-    params.update({'T': T})
-    p_n1_k = res.stack_ps(res.press_n1_k, res.sg_n1_k)
 
-    # Construct matrix D (containing accumulation terms)
-    D = construct_D(mat, params, props)
+def update_timestep(props, delta, eta_s, eta_p, omega, dt_max):
+    dt_p = np.min((1 + omega) * eta_p / (delta[::2] + omega * eta_p))
+    dt_s = np.min((1 + omega) * eta_s / (delta[1::2] + omega * eta_s))
+    dt_upd = props['time'].tstep * np.min([dt_p, dt_s])
+    return np.max([dt_upd, dt_max])
+
+
+def update_parameters(mat, params, props):
+    fluid = props['fluid']
+    rock = props['rock']
+
+    m = mat.shape[0]
+    n = mat.shape[1]
+    for j in range(m):
+        for i in range(n):
+            # Fluid and rock properties
+            params['b_o'][j, i] = fluid.calc_bo(params['p_grids_n1'][j, i])
+            params['db_o'][j, i] = fluid.calc_dbo(params['p_grids_n1'][j, i])
+            params['b_g'][j, i] = fluid.calc_bg(params['p_grids_n1'][j, i])
+            params['db_g'][j, i] = fluid.calc_dbg(params['p_grids_n1'][j, i])
+            params['mu_g'][j, i] = fluid.calc_mu_g(params['p_grids_n1'][j, i])
+            params['dmu_g'][j, i] = fluid.calc_dmu_g(params['p_grids_n1'][j, i])
+            params['rs'][j, i] = fluid.calc_rs(params['p_grids_n1'][j, i])
+            params['drs'][j, i] = fluid.calc_drs(params['p_grids_n1'][j, i])
+            params['kr_o'][j, i] = rock.calc_kro(params['sg_n1'][j, i])
+            params['dkr_o'][j, i] = rock.calc_dkro(params['sg_n1'][j, i])
+            params['kr_g'][j, i] = rock.calc_krg(params['sg_n1'][j, i])
+            params['dkr_g'][j, i] = rock.calc_dkrg(params['sg_n1'][j, i])
+    return params
+
+
+def construct_well_jacobian(mat, props, params):
+    wells = props['well']
+    grid = props['grid']
+
+    k_x = params['k_x']
+    k_y = params['k_y']
+    kr_o = params['kr_o']
+    dkr_o = params['dkr_o']
+    kr_g = params['kr_g']
+    dkr_g = params['dkr_g']
+    b_o = params['b_o']
+    db_o = params['db_o']
+    b_g = params['b_g']
+    db_g = params['db_g']
+    mu_o = params['mu_o']
+    mu_g = params['mu_g']
+    dmu_g = params['dmu_g']
+    rs = params['rs']
+    drs = params['drs']
+
+    dx = params['dx']
+    dy = params['dy']
+    dz = params['dz']
+    p_grids_n1 = params['p_grids_n1']
+
+    m = mat.shape[0]
+    n = mat.shape[1]
+    J_w = np.zeros((m * n * 2, m * n * 2))
+    for well in wells:
+        xc = well.loc[0] - 1
+        yc = well.loc[1] - 1
+
+        if well.qo_control == True:
+            # Assign well flow elements to Jacobian matrix (oil rate control)
+            J_w[(well.index_to_grid(grid.Nx) - 1) * 2 + 1, (well.index_to_grid(grid.Nx) - 1) * 2] = well.q_lim * (
+                        kr_g[yc, xc] * mu_o[yc, xc] * db_g[yc, xc] / kr_o[yc, xc] / b_o[yc, xc] / mu_g[yc, xc] + kr_g[
+                    yc, xc] * mu_o[yc, xc] * b_g[yc, xc] * db_o[yc, xc] / kr_o[yc, xc] / b_o[yc, xc] ** 2 / mu_g[
+                            yc, xc] - kr_g[yc, xc] * mu_o[yc, xc] * b_g[yc, xc] * dmu_g[yc, xc] / kr_o[yc, xc] / b_o[
+                            yc, xc] / mu_g[yc, xc] ** 2 + drs[yc, xc])
+            J_w[(well.index_to_grid(grid.Nx) - 1) * 2 + 1, (well.index_to_grid(grid.Nx) - 1) * 2 + 1] = well.q_lim * \
+                                                                                                        b_g[yc, xc] * \
+                                                                                                        mu_o[yc, xc] / \
+                                                                                                        b_o[yc, xc] / \
+                                                                                                        mu_g[yc, xc] * (
+                                                                                                                    dkr_g[
+                                                                                                                        yc, xc] *
+                                                                                                                    kr_o[
+                                                                                                                        yc, xc] -
+                                                                                                                    dkr_o[
+                                                                                                                        yc, xc] *
+                                                                                                                    kr_g[
+                                                                                                                        yc, xc]) / \
+                                                                                                        kr_o[
+                                                                                                            yc, xc] ** 2
+        else:
+            # Assign well flow elements to Jacobian matrix (bottom hole pressure control)
+            ro = 0.28 * ((k_y[yc, xc] / k_x[yc, xc]) ** 0.5 * dx[yc, xc] ** 2 + (k_x[yc, xc] / k_y[yc, xc]) ** 0.5 * dy[
+                yc, xc] ** 2) ** 0.5 / ((k_y[yc, xc] / k_x[yc, xc]) ** 0.25 + (k_x[yc, xc] / k_y[yc, xc]) ** 0.25)
+            WI = 2 * np.pi * (k_x[yc, xc] * k_y[yc, xc]) ** 0.5 * dz[yc, xc] / (np.log(ro / well.rw))
+
+            J_w[(well.index_to_grid(grid.Nx) - 1) * 2, (well.index_to_grid(grid.Nx) - 1) * 2] = WI * 0.001127 * (
+                        kr_o[yc, xc] * b_o[yc, xc] / mu_o[yc, xc] + kr_o[yc, xc] / mu_o[yc, xc] * db_o[yc, xc] * (
+                            p_grids_n1[yc, xc] - well.pwf_lim))
+            J_w[(well.index_to_grid(grid.Nx) - 1) * 2, (well.index_to_grid(grid.Nx) - 1) * 2 + 1] = WI * 0.001127 * (
+                        b_o[yc, xc] / mu_o[yc, xc] * dkr_o[yc, xc] * (p_grids_n1[yc, xc] - well.pwf_lim))
+            J_w[(well.index_to_grid(grid.Nx) - 1) * 2 + 1, (well.index_to_grid(grid.Nx) - 1) * 2] = WI * 0.001127 * (
+                        kr_g[yc, xc] * b_g[yc, xc] / mu_g[yc, xc] + kr_g[yc, xc] * (
+                            db_g[yc, xc] * mu_g[yc, xc] - b_g[yc, xc] * dmu_g[yc, xc]) / mu_g[yc, xc] ** 2 * (
+                                    p_grids_n1[yc, xc] - well.pwf_lim) + b_o[yc, xc] * kr_o[yc, xc] * rs[yc, xc] / mu_o[
+                            yc, xc] + kr_o[yc, xc] / mu_o[yc, xc] * (
+                                    drs[yc, xc] * b_o[yc, xc] + rs[yc, xc] * db_o[yc, xc]) * (
+                                    p_grids_n1[yc, xc] - well.pwf_lim))
+            J_w[(well.index_to_grid(grid.Nx) - 1) * 2 + 1, (
+                        well.index_to_grid(grid.Nx) - 1) * 2 + 1] = WI * 0.001127 * (
+                        p_grids_n1[yc, xc] - well.pwf_lim) * (b_g[yc, xc] / mu_g[yc, xc] * dkr_g[yc, xc] + rs[yc, xc] *
+                                                              b_o[yc, xc] / mu_o[yc, xc] * dkr_o[yc, xc])
+    return J_w
+
+
+def construct_well_residual(mat, props, params):
+    wells = props['well']
+    grid = props['grid']
+
+    k_x = params['k_x']
+    k_y = params['k_y']
+    kr_o = params['kr_o']
+    kr_g = params['kr_g']
+    b_o = params['b_o']
+    b_g = params['b_g']
+    mu_o = params['mu_o']
+    mu_g = params['mu_g']
+    rs = params['rs']
+
+    dx = params['dx']
+    dy = params['dy']
+    dz = params['dz']
+    p_grids_n1 = params['p_grids_n1']
+
+    m = mat.shape[0]
+    n = mat.shape[1]
+    Q = np.zeros((m * n * 2,))
+
+    for well in wells:
+        xc = well.loc[0] - 1
+        yc = well.loc[1] - 1
+
+        if well.qo_control == True:
+            # Assign well flow elements to Jacobian matrix (oil rate control)
+            Q[(well.index_to_grid(grid.Nx) - 1) * 2] = well.q_lim
+            Q[(well.index_to_grid(grid.Nx) - 1) * 2 + 1] = well.q_lim * (
+                        kr_g[yc, xc] / kr_o[yc, xc] * b_g[yc, xc] / b_o[yc, xc] * mu_o[yc, xc] / mu_g[yc, xc] + rs[
+                    yc, xc])
+        else:
+            # Assign well flow elements to Jacobian matrix (bottom hole pressure control)
+            ro = 0.28 * ((k_y[yc, xc] / k_x[yc, xc]) ** 0.5 * dx[yc, xc] ** 2 + (k_x[yc, xc] / k_y[yc, xc]) ** 0.5 * dy[
+                yc, xc] ** 2) ** 0.5 / ((k_y[yc, xc] / k_x[yc, xc]) ** 0.25 + (k_x[yc, xc] / k_y[yc, xc]) ** 0.25)
+            WI = 2 * np.pi * (k_x[yc, xc] * k_y[yc, xc]) ** 0.5 * dz[yc, xc] / (np.log(ro / well.rw))
+
+            Q[(well.index_to_grid(grid.Nx) - 1) * 2] = WI * 0.001127 * b_o[yc, xc] * kr_o[yc, xc] / mu_o[yc, xc] * (
+                        p_grids_n1[yc, xc] - well.pwf_lim)
+            Q[(well.index_to_grid(grid.Nx) - 1) * 2 + 1] = WI * 0.001127 * (
+                        kr_g[yc, xc] * b_g[yc, xc] / mu_g[yc, xc] * (p_grids_n1[yc, xc] - well.pwf) + rs[yc, xc] * b_o[
+                    yc, xc] * kr_o[yc, xc] / mu_o[yc, xc] * (p_grids_n1[yc, xc] - well.pwf_lim))
+    return Q
+
+
+def calc_rate(props, params, well_no):
+    k_x = params['k_x']
+    k_y = params['k_y']
+
+    dx = params['dx']
+    dy = params['dy']
+    dz = params['dz']
+
+    xc = props['well'][well_no].loc[0] - 1
+    yc = props['well'][well_no].loc[1] - 1
+    ro = 0.28 * ((k_y[yc, xc] / k_x[yc, xc]) ** 0.5 * dx[yc, xc] ** 2 + (k_x[yc, xc] / k_y[yc, xc]) ** 0.5 * dy[
+        yc, xc] ** 2) ** 0.5 / ((k_y[yc, xc] / k_x[yc, xc]) ** 0.25 + (k_x[yc, xc] / k_y[yc, xc]) ** 0.25)
+    WI = 2 * np.pi * (k_x[yc, xc] * k_y[yc, xc]) ** 0.5 * dz[yc, xc] / np.log(ro / props['well'][well_no].rw) * 0.001127
+    props['well'][well_no].q = WI * params['kr_o'][yc, xc] * params['b_o'][yc, xc] / params['mu_o'][yc, xc] * (
+                params['p_grids_n1'][yc, xc] - props['well'][well_no].pwf)
+    return props['well'][well_no].q
+
+
+def calc_gas_rate(props, params, well_no):
+    k_x = params['k_x']
+    k_y = params['k_y']
+
+    dx = params['dx']
+    dy = params['dy']
+    dz = params['dz']
+
+    xc = props['well'][well_no].loc[0] - 1
+    yc = props['well'][well_no].loc[1] - 1
+    ro = 0.28 * ((k_y[yc, xc] / k_x[yc, xc]) ** 0.5 * dx[yc, xc] ** 2 + (k_x[yc, xc] / k_y[yc, xc]) ** 0.5 * dy[
+        yc, xc] ** 2) ** 0.5 / ((k_y[yc, xc] / k_x[yc, xc]) ** 0.25 + (k_x[yc, xc] / k_y[yc, xc]) ** 0.25)
+    WI = 2 * np.pi * (k_x[yc, xc] * k_y[yc, xc]) ** 0.5 * dz[yc, xc] / np.log(ro / props['well'][well_no].rw) * 0.001127
+    qg = WI * (params['kr_o'][yc, xc] * params['b_o'][yc, xc] / params['mu_o'][yc, xc] * params['rs'][yc, xc] +
+               params['kr_g'][yc, xc] * params['b_g'][yc, xc] / params['mu_g'][yc, xc]) * (
+                     params['p_grids_n1'][yc, xc] - props['well'][well_no].pwf) / (1000 / 5.615)
+    return qg
+
+
+def calc_pwf(props, params, well_no):
+    k_x = params['k_x']
+    k_y = params['k_y']
+
+    dx = params['dx']
+    dy = params['dy']
+    dz = params['dz']
+
+    xc = props['well'][well_no].loc[0] - 1
+    yc = props['well'][well_no].loc[1] - 1
+    ro = 0.28 * ((k_y[yc, xc] / k_x[yc, xc]) ** 0.5 * dx[yc, xc] ** 2 + (k_x[yc, xc] / k_y[yc, xc]) ** 0.5 * dy[
+        yc, xc] ** 2) ** 0.5 / ((k_y[yc, xc] / k_x[yc, xc]) ** 0.25 + (k_x[yc, xc] / k_y[yc, xc]) ** 0.25)
+    WI = 2 * np.pi * (k_x[yc, xc] * k_y[yc, xc]) ** 0.5 * dz[yc, xc] / np.log(ro / props['well'][well_no].rw) * 0.001127
+    props['well'][well_no].pwf = params['p_grids_n1'][yc, xc] - props['well'][well_no].q / WI / params['kr_o'][yc, xc] / \
+                                 params['b_o'][yc, xc] * params['mu_o'][yc, xc]
+    return props['well'][well_no].pwf
+
+
+def calc_cfl(qo, dt, params, props):
+    PV = params['dx'][qo.loc[0] - 1, qo.loc[1] - 1] * params['dy'][qo.loc[0] - 1, qo.loc[1] - 1] * params['dz'][
+        qo.loc[0] - 1, qo.loc[1] - 1] * props['rock'].por
+    # qt = qo.q + qo.q*params['kr_g'][qo.loc[0]-1, qo.loc[1]-1]/params['kr_o'][qo.loc[0]-1, qo.loc[1]-1]*params['b_g'][qo.loc[0]-1, qo.loc[1]-1]/params['b_o'][qo.loc[0]-1, qo.loc[1]-1]*params['mu_o'][qo.loc[0]-1, qo.loc[1]-1]/params['mu_g'][qo.loc[0]-1, qo.loc[1]-1]
+    qt = qo.q + qo.q * params['rs'][qo.loc[0] - 1, qo.loc[1] - 1]
+    cfl = qt * props['time'].tstep / PV
+    return cfl
+
+
+def run_simulation(mat, props, params):
+    grid = props['grid']
+    res = props['res']
+    wells = props['well']
+
+    # Set tolerances for Newton's convergence
+    eps_1 = 1e-3  # Infinite norm Residual tolerance
+    eps_2 = 0.01  # Gas saturation tolerance
+    eps_3 = 0.001  # Pressure tolerance
+
+    # Set auto time stepping parameters
+    eta_s = 0.05
+    eta_p = 50
+    omega = 0.5
+    dt_max = 4
+
+    y_int = props['well'][0].loc[0] - 1
+    x_int = props['well'][0].loc[1] - 1
+    t_list = []
+    p_well_block = []
+    qo_list = []
+    qg_list = []
+    fpr_list = []
+    bhp_list = []
+    nr_list = []
+    cfl_list = []
+    t = 0
     p_n = res.stack_ps(res.press_n, res.sg_n)
 
-    # Compute residual matrix
-    R = np.dot(T, p_n1_k) - D
+    while t < props['time'].tmax:
+        # Store variables of interest
+        p_well_block.append(params['p_grids_n1'][y_int, x_int])
+        fpr_list.append(np.average(params['p_grids_n1']))
+        bhp_list.append(wells[0].pwf)
+        t_list.append(t)
+        qo_list.append(calc_rate(props, params, well_no=0))
+        qg_list.append(calc_gas_rate(props, params, well_no=0))
 
-    # Compute Jacobian Matrix
-    J = construct_J(mat, params, props)
+        # Newton's Iteration Loop
+        crit1 = 99
+        crit2 = 99
+        crit3 = 99
 
-    # Flip variables (pressure and sg) to match the reference case format
-    R_flipped = flip_variables(R, 0)
-    J_flipped = flip_variables(J, 1)
+        # Parameters preconditioning
+        p_n1_k = p_n
+        params['p_grids_n1'] = params['p_grids_n']
+        params['sg_n1'] = params['sg_n']
+        props['res'].press_n1_k = props['res'].press_n
+        props['res'].sg_n1_k = props['res'].sg_n
 
-    # For Reference Case: Report mean absolute error and relative error
-    j_dir = 'https://raw.githubusercontent.com/titaristanto/reservoir-simulation/master/reference_J.csv'
-    r_dir = 'https://raw.githubusercontent.com/titaristanto/reservoir-simulation/master/reference_R.csv'
-    J_reference = pd.read_csv(j_dir, header=None)
-    R_reference = pd.read_csv(r_dir, header=None)
+        # Newton's Iteration Loop
+        max_nr_iter = 15
+        i = 0
+        while crit1 > eps_1 or (crit2 >= eps_2 and crit3 >= eps_3):
+            # while crit1 > eps_1:
+            if i <= max_nr_iter:
+                # Update flow rate and pressure
+                for j, well in enumerate(wells):
+                    if well.pwf < well.pwf_lim:
+                        well.qo_control = False
+                    if well.qo_control == False:
+                        well.pwf = well.pwf_lim
+                        well.q = calc_rate(props, params, well_no=j)
+                    else:
+                        well.q = well.q_lim
+                        well.pwf = calc_pwf(props, params, well_no=j)
 
-    mean_abs_error_R = mean_absolute_error(R_flipped, R_reference)
-    mean_abs_error_J = mean_absolute_error(J_flipped, J_reference)
+                # Construct matrix T (containing transmissibility terms)
+                T = construct_T(mat, params)
 
-    relative_error_R = norm(np.reshape(R_flipped, (-1, 1)) - R_reference) / norm(R_reference)
-    relative_error_J = norm(J_flipped - J_reference) / norm(J_reference)
+                # Construct matrix D (containing accumulation terms)
+                D = construct_D(mat, params, props)
 
-    print('Mean abs error R =', mean_abs_error_R)
-    print('Mean abs error J =', mean_abs_error_J)
-    print('Relative error R =', relative_error_R)
-    print('Relative error J =', relative_error_J)
+                # Compute residual matrix
+                Q = construct_well_residual(mat, props, params)
+                R = np.dot(T, p_n1_k) - D - Q
 
-    # Print residual and Jacobian into .csv files
-    os.chdir('C:\\Users\\E460\\Documents\\Stanford\\Courses\\Winter 17\\Reservoir Simulation\\Phase 3b\\Result')
-    np.savetxt('R.csv', R_flipped, delimiter=',')
-    np.savetxt('J.csv', J_flipped, delimiter=',')
+                # Compute Jacobian Matrix
+                J_ori = construct_J(mat, params, props, T)
+                J_w = construct_well_jacobian(mat, props, params)
+                J = J_ori - J_w
 
-    # Sparse matrix
-    J_ref_sparse = sparse.csr_matrix(J_reference)
-    io.mmwrite('sparse_J_ref.csv', J_ref_sparse)
-    J_result_sparse = sparse.csr_matrix(J_flipped)
-    io.mmwrite('sparse_J_result.csv', J_result_sparse)
+                # Update the solution
+                delta = (gmres(J, -R))[0]
+                p_n1_k1 = p_n1_k + delta
+                props['res'].press_n1_k = p_n1_k1[::2]
+                props['res'].sg_n1_k = p_n1_k1[1::2]
+                params['p_grids_n1'] = np.reshape(props['res'].press_n1_k, (grid.Ny, grid.Nx))
+                params['sg_n1'] = np.reshape(props['res'].sg_n1_k, (grid.Ny, grid.Nx))
 
-    R_ref_sparse = sparse.csr_matrix(R_reference)
-    io.mmwrite('sparse_R_ref.csv', R_ref_sparse)
-    R_result_sparse = sparse.csr_matrix(R_flipped)
-    io.mmwrite('sparse_R_result.csv', R_result_sparse)
+                # Update rock and fluid properties
+                params = update_parameters(mat, params, props)
+
+                # Update flow rate and bottom hole pressure
+                for j, well in enumerate(wells):
+                    if well.qo_control == False:
+                        well.pwf = well.pwf_lim
+                        well.q = calc_rate(props, params, well_no=j)
+                    else:
+                        well.q = well.q_lim
+                        well.pwf = calc_pwf(props, params, well_no=j)
+
+                # Assess convergence criteria
+                PV = params['dx'] * params['dy'] * params['dz'] * props['rock'].por
+                crit1_o = np.abs(
+                    5.615 / np.reshape(params['b_o'], (grid.Nx * grid.Ny,)) * props['time'].tstep * R[::2] / np.reshape(
+                        PV, (grid.Nx * grid.Ny,)))
+                crit1_g = np.abs(5.615 / np.reshape(params['b_g'], (grid.Nx * grid.Ny,)) * props['time'].tstep * R[
+                                                                                                                 1::2] / np.reshape(
+                    PV, (grid.Nx * grid.Ny,)))
+                crit1 = np.max([crit1_o, crit1_g])
+                crit2 = np.max(np.abs(p_n1_k1[1::2] - p_n1_k[1::2]))
+                crit3 = np.max(np.abs((p_n1_k1[::2] - p_n1_k[::2]) / np.average(p_n1_k1[::2])))
+
+                # Update time-step
+                # props['time'].tstep = update_timestep(props, delta, eta_s, eta_p, omega, dt_max)
+
+                p_n1_k = p_n1_k1
+                print('timestep : %.3f; NR iter : %.0f; Residual Error: %.4f' % (t, i + 1, crit1))
+                i += 1
+            else:
+                print('entering else')
+                p_n1_k = p_n
+                props['time'].tstep /= 2
+                i = 0
+        p_n = p_n1_k1
+        params['p_grids_n'] = params['p_grids_n1']
+        params['sg_n'] = params['sg_n1']
+        props['res'].press_n = props['res'].press_n1_k
+        props['res'].sg_n = props['res'].sg_n1_k
+        t += props['time'].tstep
+        nr_list.append(i)
+        cfl_list.append(calc_cfl(wells[0], props['time'].tstep, params, props))
+
+    return [t_list, qo_list, qg_list, bhp_list, p_well_block, fpr_list, nr_list, cfl_list]
 
 
-if __name__ == '__main__':
-    main()
+def plot_pressure(t, p_pred, label, color):
+    """Plots pressure v time"""
+    plt.plot(t, p_pred, color, label=label, linewidth=3)
+    plt.xlabel("Time (days)")
+    plt.ylabel("Pressure (psi)", fontsize=9)
+    plt.legend(loc="best", prop=dict(size=8))
+    plt.xlim(0, max(t))
+    plt.ylim(min(p_pred), max(p_pred))
+    plt.grid(True)
+    plt.draw()
+
+
+def plot_rate(t, q_pred, label, color):
+    """Plots rate v time"""
+    plt.plot(t, q_pred, color, label=label, linewidth=3)
+    plt.xlabel("Time (days)")
+    plt.ylabel("Oil Rate (STB/day)", fontsize=9)
+    plt.legend(loc="best", prop=dict(size=8))
+    plt.xlim(0, max(t))
+    plt.ylim(0, max(q_pred))
+    plt.grid(True)
+    plt.draw()
+
+
+def plot_gas_rate(t, q_pred, label, color):
+    """Plots rate v time"""
+    plt.plot(t, q_pred, color, label=label, linewidth=3)
+    plt.xlabel("Time (days)")
+    plt.ylabel("Gas Rate (MSCFD)", fontsize=9)
+    plt.legend(loc="best", prop=dict(size=8))
+    plt.xlim(0, max(t))
+    plt.ylim(0, max(q_pred))
+    plt.grid(True)
+    plt.draw()
+
+
+def plot_var(t, var_pred, y_axis_title, label, color):
+    """Plots rate v time"""
+    plt.plot(t, var_pred, color, label=label, linewidth=3)
+    plt.xlabel("Time (days)")
+    plt.ylabel(y_axis_title, fontsize=9)
+    plt.legend(loc="best", prop=dict(size=8))
+    plt.xlim(0, max(t))
+    plt.ylim(0, max(var_pred))
+    plt.grid(True)
+    plt.draw()
+
+
+def spatial_map(p_2D, title):
+    """Plots variable of interest on a 2D spatial map"""
+    plt.matshow(p_2D)
+    plt.colorbar()
+    plt.xlabel('grid in x-direction')
+    plt.ylabel('grid in y-direction')
+    plt.title(title)
+    plt.draw()

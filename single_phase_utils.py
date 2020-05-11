@@ -113,11 +113,11 @@ class prop_time(object):
 
 def load_data(filename):
     """Loads ECLIPSE simulation block pressure data as a comparison"""
-    url = 'https://raw.githubusercontent.com/titaristanto/reservoir-simulation/master/eclipse%20bhp.csv'
-    df = pd.read_csv(url)
+    df = pd.read_csv(filename)
 
     t = df.loc[:, ['TIME']]  # Time in simulation: DAY
     p = df.loc[:, ['BPR:(18,18,1)']]
+    print('Data loaded!')
     return t, p
 
 
@@ -301,93 +301,3 @@ def plot_derivatives(t_act, t, dp_act, dp_pred, p_der_act, p_der_pred, title):
     plt.grid()
     plt.draw()
 
-
-def main():
-    # Initialization
-    tstep = 1  # day
-    timeint = np.arange(0, 401, tstep)
-    sim_time = prop_time(tstep=tstep,
-                         timeint=timeint)
-    rock = prop_rock(kx=200,  # permeability in x direction in mD
-                     ky=100,  # permeability in y direction in mD
-                     por=0.25,  # porosity in fraction
-                     cr=0)  # 1/psi
-    fluid = prop_fluid(c_o=1.2 * 10 ** -5,  # oil compressibility in 1/psi
-                       mu_o=2,  # oil viscosity in cP
-                       rho_o=49.1)  # lbm/ft3
-    grid = prop_grid(Nx=35,
-                     Ny=35,
-                     Nz=1)  # no of grid blocks in x, y , and z
-    res = prop_res(Lx=3500,  # reservoir length in ft
-                   Ly=3500,  # reservoir width in ft
-                   Lz=100,  # reservoir height in ft
-                   p_init=6000)  # initial block pressure in psi
-    well1 = prop_well(loc=(18, 18),  # well location
-                      q=2000)  # well flowrate in STB/D
-    props = {'rock': rock, 'fluid': fluid, 'grid': grid, 'res': res, 'well': [well1], 'time': sim_time}
-
-    # Load data from Eclipse
-    t_ecl, p_ecl = load_data('eclipse bhp.csv')
-
-    ### Main Case: 1 producer
-    # Run simulation
-    print('Running Main Case: 1 producer')
-    p_well_block, p_grids = run_simulation(props)
-
-    # Plotting
-    plt.figure()
-    plot_pressure(timeint, p_well_block, label='Phase-1 Simulator', color='red')
-    plot_pressure(t_ecl.values, p_ecl.values, label='Eclipse', color='black')
-    plt.title('Main Case: 1 producer')
-
-    p_2D = np.reshape(p_grids, (grid.Nx, grid.Ny))
-    spatial_map(p_2D, 'Main Case: 1 producer')
-    plt.title('Main Case: 1 producer')
-
-    derivatives(timeint, np.matrix(p_well_block), p_ecl.values, 'Main Case: 1 producer')
-
-    ## Additional Case: 3 producers
-    # Define 2 more producers
-    well2 = prop_well(loc=(3, 5), q=300)
-    well3 = prop_well(loc=(33, 30), q=2500)
-    props['well'] = [well1, well2, well3]
-
-    # Run simulation
-    print('Running Additional Case: 3 producers')
-    p_well_block, p_grids = run_simulation(props)
-
-    # Plotting
-    plt.figure()
-    plot_pressure(timeint, p_well_block, label='Phase-1 Simulator', color='red')
-    plot_pressure(t_ecl.values, p_ecl.values, label='Eclipse', color='black')
-    plt.title('Additional Case: 3 producers')
-
-    p_2D = np.reshape(p_grids, (grid.Nx, grid.Ny))
-    spatial_map(p_2D, 'Additional Case: 3 producers')
-
-    derivatives(timeint, np.matrix(p_well_block), p_ecl.values, 'Additional Case: 3 producers')
-
-    ## Additional Case: 1 producer 1 injector
-    # Define 1 injector
-    well4 = prop_well(loc=(3, 5), q=-2000)
-    props['well'] = [well1, well4]
-
-    # Run simulation
-    print('Running Additional Case: 1 producer 1 injector')
-    p_well_block, p_grids = run_simulation(props)
-
-    # Plotting
-    plt.figure()
-    plot_pressure(timeint, p_well_block, label='Phase-1 Simulator', color='red')
-    plot_pressure(t_ecl.values, p_ecl.values, label='Eclipse', color='black')
-    plt.title('Additional Case: 1 producer 1 injector')
-
-    p_2D = np.reshape(p_grids, (grid.Nx, grid.Ny))
-    spatial_map(p_2D, 'Additional Case: 1 producer 1 injector')
-
-    derivatives(timeint, np.matrix(p_well_block), p_ecl.values, 'Additional Case: 1 producer 1 injector')
-    plt.show(block=True)
-
-
-if __name__ == '__main__':
-    main()
