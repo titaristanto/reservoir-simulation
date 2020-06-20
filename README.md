@@ -4,8 +4,8 @@ This script is an implementation of a discretized single-phase homogeneous isoth
 equation: <img src="https://render.githubusercontent.com/render/math?math=T p^{(n+1)}=D(p^{(n+1)}-p^{(n)})+Q">
 
 , where T is a transmissibility matrix, D is an accumulation
-matrix, and Q is a source/sink matrix (which represents well(s)). p^(n+1) is a vector of unknown 
-(in this case, pressure) at time level n and p^(n) is the same variable at current time level n.
+matrix, and Q is a source/sink matrix (which represents well(s)). <img src="https://render.githubusercontent.com/render/math?math=p^{(n+1)}"> is a vector of unknown 
+(in this case, pressure) at time level n and <img src="https://render.githubusercontent.com/render/math?math=p^{(n)}"> is the same variable at current time level n.
 This case assumes no capillary pressure, isotropic permeability, and constant viscosity. 
 Well treatment is not included. This code treats the unknown (pressure) implicitly and transmissibilities 
 explicitly.
@@ -13,7 +13,7 @@ explicitly.
 Generalized Minimal Residual iteration (GMRES) is used to solve the linear matrix system, 
 which is an iterative method for the numerical solution of a nonsymmetric system of 
 linear equations. This function solves for p at time level n+1. This new pressure vector 
-updates formation volume factor B_o in every grid, which also updates transmissibility matrix, 
+updates formation volume factor Bo in every grid, which also updates transmissibility matrix, 
 so then we can solve for pressure at the next time level. This process continues until 
 it reaches the end of simulation time.
 
