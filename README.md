@@ -1,10 +1,7 @@
 # single_phase_homogeneous_isothermal_2D_reservoir
 
 This script is an implementation of a discretized single-phase homogeneous isothermal 2D reservoir 
-equation: <!--    n + 1         n + 1    n     
-T p       =  D (p      - p ) + Q
-
- --> 
+equation: <img src="https://render.githubusercontent.com/render/math?math=T p^{(n+1)}=D(p^{(n+1)}-p^{(n)})+Q">
 
 , where T is a transmissibility matrix, D is an accumulation
 matrix, and Q is a source/sink matrix (which represents well(s)). p^(n+1) is a vector of unknown 
